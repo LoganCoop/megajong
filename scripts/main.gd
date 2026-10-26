@@ -61,12 +61,19 @@ var discard_view: TileView
 var meld_btn: Button
 var discard_btn: Button
 var sort_btn: Button
+var hint_btn: Button
+var power_btn: Button
+var hint_index := 0
+var rule_choice := "mega"
+var sfx: Sfx
 var score_nodes: Array[CanvasItem] = []
 var signs: Array[Label] = []
 
 
 func _ready() -> void:
 	theme = Style.make_theme()
+	sfx = Sfx.new()
+	add_child(sfx)
 	_build_ui()
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -77,6 +84,9 @@ func _ready() -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
+	if event.is_pressed() and (event as InputEventKey).keycode == KEY_M:
+		sfx.toggle_mute()
+		return
 	if event.is_pressed() and (event as InputEventKey).keycode == KEY_ESCAPE and not left:
 		_leave_to_menu()
 
@@ -128,6 +138,7 @@ func _button(text: String, rect: Rect2, callback: Callable, parent: Control = nu
 	b.position = rect.position
 	b.size = rect.size
 	b.pressed.connect(callback)
+	b.pressed.connect(func() -> void: sfx.play("ui"))
 	(parent if parent else world).add_child(b)
 	return b
 
@@ -201,13 +212,15 @@ func _build_ui() -> void:
 	total_label = _label("", 16, GOLD, Vector2(0, 163), 480, HORIZONTAL_ALIGNMENT_CENTER)
 	message_label = _label("", 16, Color.WHITE, Vector2(0, 96), 480, HORIZONTAL_ALIGNMENT_CENTER)
 
-	char_label = _label("", 8, Style.DIM, Vector2(4, 252), 122)
+	char_label = _label("", 8, Style.DIM, Vector2(4, 252), 94)
 	char_label.clip_text = true
 	round_label = _label("", 8, GOLD, Vector2(374, 130), 80, HORIZONTAL_ALIGNMENT_CENTER)
-	menu_btn = _button("MENU", Rect2(358, 246, 44, 18), _leave_to_menu)
-	meld_btn = _button("MELD", Rect2(130, 246, 68, 18), _on_meld)
-	discard_btn = _button("DISCARD", Rect2(206, 246, 68, 18), _on_discard)
+	hint_btn = _button("HINT", Rect2(100, 246, 42, 18), _on_hint)
+	meld_btn = _button("MELD", Rect2(146, 246, 60, 18), _on_meld)
+	discard_btn = _button("DISCARD", Rect2(210, 246, 68, 18), _on_discard)
 	sort_btn = _button("BY SUIT", Rect2(282, 246, 68, 18), _on_sort)
+	power_btn = _button("PWR x0", Rect2(354, 246, 54, 18), _on_power)
+	menu_btn = _button("MENU", Rect2(412, 246, 44, 18), _leave_to_menu)
 
 	var layer := CanvasLayer.new()
 	layer.layer = 10
@@ -232,7 +245,7 @@ func _set_table_visible(on: bool) -> void:
 	for s in signs:
 		s.visible = on
 	for c: CanvasItem in [hint_label, wall_view, discard_view, wall_label, discard_label, meld_label,
-			chips_label, mult_label, total_label, char_label, round_label, meld_btn, discard_btn, sort_btn, menu_btn]:
+			chips_label, mult_label, total_label, char_label, round_label, meld_btn, discard_btn, sort_btn, hint_btn, power_btn, menu_btn]:
 		c.visible = on
 
 
@@ -277,8 +290,8 @@ func _show_main_menu() -> void:
 func _show_rules() -> void:
 	_close_overlay()
 	_open_menu_screen("HOW TO PLAY")
-	_label("10 TILES EACH. DRAW FROM THE WALL\nOR THE DISCARD PILE, LAY SETS AND RUNS\nOF 3-5 TILES, THEN DISCARD ONE TO\nEND YOUR TURN.\n\nEVERY MELD SCORES DATA // SURGE.\nEACH EXTRA MELD IN A TURN ADDS +1 SURGE.\nEMPTY YOUR HAND TO GO OUT FOR +%d.\nBEST TOTAL AFTER %d ROUNDS WINS.\n\n龍 WILD   金 GOLD +%d DATA   盗 THIEF -%d PTS" % [TableGame.OUT_BONUS, TableGame.ROUNDS, TableGame.GOLD_CHIPS, TableGame.THIEF_STEAL],
-		8, Style.TEXT, Vector2(0, 70), 480, HORIZONTAL_ALIGNMENT_CENTER, overlay).add_theme_constant_override("line_spacing", 2)
+	_label("DRAW FROM THE WALL OR THE DISCARD\nPILE, LAY MELDS OF 3-5 TILES, THEN\nDISCARD ONE TO END YOUR TURN.\n\nEVERY MELD SCORES DATA // SURGE.\nEACH EXTRA MELD IN A TURN ADDS +1 SURGE.\nEMPTY YOUR HAND TO GO OUT FOR +%d.\nBEST TOTAL AFTER %d ROUNDS WINS.\n\nMEGA/MARATHON: MELDS REFILL YOUR HAND,\nMELDS PER TURN ARE CAPPED, AND ONLY A\nMELD CAN GO OUT FOR THE BONUS.\n\n龍 WILD   金 GOLD +%d DATA   盗 THIEF -%d PTS" % [TableGame.OUT_BONUS, TableGame.ROUNDS, TableGame.GOLD_CHIPS, TableGame.THIEF_STEAL],
+		8, Style.TEXT, Vector2(0, 62), 480, HORIZONTAL_ALIGNMENT_CENTER, overlay).add_theme_constant_override("line_spacing", 2)
 	_button("BACK", Rect2(190, 248, 100, 18), func() -> void:
 		_close_overlay()
 		_show_main_menu(), overlay)
@@ -321,10 +334,29 @@ func _make_setup(human_chars: Array, human_names: Array) -> Dictionary:
 	while seats.size() < 4:
 		seats.append({"name": BOTS[b][0], "character": free[b], "bot": BOTS[b][1]})
 		b += 1
-	return {"seats": seats}
+	return {"seats": seats, "rules": rule_choice}
+
+
+## Lets the player pick a game mode; returns its id, or "" if they went back.
+func _pick_rules(prompt: String) -> String:
+	_close_overlay()
+	_open_menu_screen(prompt)
+	for i in TableGame.RULE_IDS.size():
+		var id: String = TableGame.RULE_IDS[i]
+		var r: Dictionary = TableGame.RULESETS[id]
+		_button("%s\n%s" % [r.name, r.desc], Rect2(90, 84 + i * 36, 300, 30), func() -> void: picked.emit(id), overlay)
+	_button("BACK", Rect2(190, 84 + TableGame.RULE_IDS.size() * 36, 100, 20), func() -> void: picked.emit(""), overlay)
+	var res: String = await picked
+	_close_overlay()
+	return res
 
 
 func _menu_solo() -> void:
+	var rid := await _pick_rules("CHOOSE GAME MODE")
+	if rid == "":
+		_show_main_menu()
+		return
+	rule_choice = rid
 	var id := await _pick_character("CHOOSE YOUR CHARACTER", [])
 	if id == "":
 		_show_main_menu()
@@ -336,6 +368,11 @@ func _menu_solo() -> void:
 
 
 func _menu_local() -> void:
+	var rid := await _pick_rules("CHOOSE GAME MODE")
+	if rid == "":
+		_show_main_menu()
+		return
+	rule_choice = rid
 	_close_overlay()
 	_open_menu_screen("HUMAN PLAYERS")
 	var count := 0
@@ -367,6 +404,11 @@ func _menu_local() -> void:
 # ---------------------------------------------------------------- Online lobby
 
 func _menu_host() -> void:
+	var rid := await _pick_rules("HOST: CHOOSE GAME MODE")
+	if rid == "":
+		_show_main_menu()
+		return
+	rule_choice = rid
 	var id := await _pick_character("HOST: CHOOSE YOUR CHARACTER", [])
 	if id == "":
 		_show_main_menu()
@@ -577,6 +619,7 @@ func _rpc_round_end(over: bool, snap: Dictionary) -> void:
 @rpc("authority", "call_remote", "reliable")
 func _rpc_reject(err: String) -> void:
 	busy = false
+	sfx.play("error")
 	_shake(2.5)
 	_show_message(err.to_upper(), MULT_RED)
 	_refresh()
@@ -621,6 +664,17 @@ func _sanitize_action(action: Dictionary) -> Dictionary:
 		"discard":
 			if action.get("tile", null) is int:
 				return {"type": "discard", "tile": action.tile}
+		"power":
+			var id := str(action.get("id", ""))
+			var raw_tiles: Variant = action.get("tiles", [])
+			if TableGame.POWER_IDS.has(id) and raw_tiles is Array and (raw_tiles as Array).size() <= MAX_SELECT \
+					and action.get("target", 0) is int:
+				var ptiles: Array = []
+				for t: Variant in raw_tiles:
+					if not t is int:
+						return {}
+					ptiles.append(t)
+				return {"type": "power", "id": id, "tiles": ptiles, "target": action.get("target", 0)}
 	return {}
 
 
@@ -651,10 +705,10 @@ func _snapshot(for_seat: int) -> Dictionary:
 		var s := game.seats[i]
 		var hand: Array = s.hand.duplicate() if i == for_seat else s.hand.map(func(_t: int) -> int: return -1)
 		seats_a.append({"hand": hand, "total": s.total, "meld_count": s.meld_count, "last": s.last,
-			"bot": s.is_bot, "name": s.name})
+			"bot": s.is_bot, "name": s.name, "powerups": s.powerups.duplicate()})
 	return {"seats": seats_a, "wall": game.wall.size(), "discard": game.discard.duplicate(),
 		"current": game.current, "phase": int(game.phase), "round": game.round_number,
-		"turn_melds": game.turn_melds, "end_info": game.end_info.duplicate()}
+		"turn_melds": game.turn_melds, "surge_next": game.surge_next, "last_kind": game.last_kind, "end_info": game.end_info.duplicate()}
 
 
 func _load_snapshot(snap: Dictionary) -> void:
@@ -665,6 +719,7 @@ func _load_snapshot(snap: Dictionary) -> void:
 		s.total = d.total
 		s.meld_count = d.meld_count
 		s.last = d.last
+		s.powerups.assign(d.powerups)
 		s.is_bot = d.bot
 		if i != view_seat:
 			s.name = d.name
@@ -674,6 +729,8 @@ func _load_snapshot(snap: Dictionary) -> void:
 	game.phase = snap.phase
 	game.round_number = snap.round
 	game.turn_melds = snap.turn_melds
+	game.surge_next = snap.surge_next
+	game.last_kind = snap.last_kind
 	game.end_info = snap.end_info
 
 
@@ -682,6 +739,13 @@ func _broadcast_event(si: int, res: Dictionary) -> void:
 		var r := res.duplicate()
 		if r.type == "draw" and r.from == "wall" and seat != si:
 			r.erase("tile")
+		if r.type == "meld" and seat != si:
+			r.erase("refill")
+		if r.type == "power" and seat != si and seat != int(r.get("target", -1)):
+			if r.id == "swap" or r.id == "draw3":
+				r.erase("gave")
+				r.erase("got")
+				r.erase("tiles")
 		_rpc_event.rpc_id(seat_peer[seat], si, r, _snapshot(seat))
 
 
@@ -706,6 +770,7 @@ func _client_pump() -> void:
 				_clear_hand_views()
 				_reconcile_hand(true)
 				_refresh()
+				sfx.play("round")
 				_show_message("ROUND %d" % game.round_number, GOLD)
 				await get_tree().create_timer(0.9).timeout
 			"event":
@@ -723,6 +788,7 @@ func _begin_game(setup: Dictionary, seat: int) -> void:
 	left = false
 	view_seat = seat
 	game = TableGame.new()
+	game.set_rules(str(setup.get("rules", "mega")))
 	for i in setup.seats.size():
 		var d: Dictionary = setup.seats[i]
 		var seat_name: String = d.name
@@ -742,6 +808,7 @@ func _run_game() -> void:
 			_reconcile_hand(true)
 		_refresh()
 		_broadcast_round(null)
+		sfx.play("round")
 		_show_message("ROUND %d" % game.round_number, GOLD)
 		await get_tree().create_timer(0.9).timeout
 		while game.phase != TableGame.Phase.ENDED:
@@ -812,7 +879,8 @@ func _show_round_result(over: bool) -> void:
 	_open_overlay("FINAL RESULT" if over else "ROUND %d COMPLETE" % game.round_number)
 	var lines: Array[String] = []
 	if game.end_info.reason == "out":
-		lines.append("%s WENT OUT!  +%d\n" % [game.seats[game.end_info.winner].name, TableGame.OUT_BONUS])
+		var pts := int(game.end_info.get("bonus", TableGame.OUT_BONUS))
+		lines.append("%s WENT OUT!%s\n" % [game.seats[game.end_info.winner].name, "  +%d" % pts if pts > 0 else ""])
 	else:
 		lines.append("WALL EMPTY - NOBODY WENT OUT\n")
 	var rank := 1
@@ -863,12 +931,14 @@ func _sort_key(a: TileView, b: TileView) -> bool:
 
 func _layout_hand(staggered := false) -> void:
 	views.sort_custom(_sort_key)
-	var start_x := (480.0 - (views.size() * SLOT_W - 5)) / 2.0
+	var slot := minf(float(SLOT_W), 468.0 / maxi(views.size(), 1))
+	var start_x := (480.0 - (views.size() * slot - (slot - TileView.W))) / 2.0
 	for i in views.size():
+		views[i].z_index = i
 		var tw := create_tween()
 		if staggered:
 			tw.tween_interval(i * 0.05)
-		tw.tween_property(views[i], "position", Vector2(start_x + i * SLOT_W, HAND_Y), 0.28) \
+		tw.tween_property(views[i], "position", Vector2(start_x + i * slot, HAND_Y), 0.28) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
@@ -905,6 +975,7 @@ func _selected_tiles() -> Array:
 func _refresh() -> void:
 	_update_all()
 	_update_buttons()
+	_update_hint_marks()
 	_update_preview()
 
 
@@ -917,7 +988,7 @@ func _update_all() -> void:
 		d.l1.text = "%s - %s" % [s.name, s.character.name]
 		d.l1.add_theme_color_override("font_color", s.character.color)
 		d.l2.text = "SCORE %d" % int(shown_totals[i])
-		d.l3.text = "HAND %d MELD %d" % [s.hand.size(), s.meld_count]
+		d.l3.text = "H%d M%d PWR %d" % [s.hand.size(), s.meld_count, s.powerups.size()]
 		d.l4.text = s.last
 		d.panel.add_theme_stylebox_override("panel", _panel_box(i == game.current and game.phase != TableGame.Phase.ENDED, s.character.color))
 	round_label.text = "ROUND %d/%d" % [game.round_number, TableGame.ROUNDS]
@@ -929,8 +1000,17 @@ func _update_all() -> void:
 	if game.phase == TableGame.Phase.ENDED:
 		hint_label.text = ""
 	elif game.current == view_seat:
-		hint_label.text = "YOUR TURN - CLICK THE WALL OR DISCARD TO DRAW" if game.phase == TableGame.Phase.DRAW \
-			else "MELD 3-5 TILES, THEN DISCARD 1 TO END YOUR TURN"
+		if game.phase == TableGame.Phase.DRAW:
+			hint_label.text = "YOUR TURN - CLICK THE WALL OR DISCARD TO DRAW"
+			if not game.discard.is_empty():
+				var with_top: Array = game.seats[view_seat].hand.duplicate()
+				with_top.append(game.discard.back())
+				if not Bot.best_meld(with_top, game.discard.back()).is_empty():
+					hint_label.text = "THE DISCARD COMPLETES A MELD FOR YOU!"
+		else:
+			var n := game.hints(view_seat).size()
+			hint_label.text = ("%d MELD%s IN HAND - GREEN TILES, OR PRESS HINT" % [n, "" if n == 1 else "S"]) if n > 0 \
+				else "NO MELDS YET - DISCARD 1 TILE TO END YOUR TURN"
 	else:
 		hint_label.text = "%s IS PLAYING..." % game.seats[game.current].name
 
@@ -939,6 +1019,99 @@ func _update_buttons() -> void:
 	var can := game != null and human_turn and not busy and game.phase == TableGame.Phase.ACT
 	meld_btn.disabled = not can
 	discard_btn.disabled = not can
+	hint_btn.disabled = not can
+	var owned := 0
+	if game != null and view_seat < game.seats.size():
+		owned = game.seats[view_seat].powerups.size()
+	power_btn.text = "PWR x%d" % owned
+	power_btn.disabled = not can or owned == 0
+
+
+## Outlines every tile that is part of at least one meld the hand can lay right now.
+func _update_hint_marks() -> void:
+	var usable := {}
+	if game != null and human_turn and game.phase == TableGame.Phase.ACT:
+		for h in game.hints(view_seat):
+			for t: int in h.tiles:
+				usable[t] = true
+	for v in views:
+		v.hint = usable.has(v.tile)
+
+
+func _on_hint() -> void:
+	if not human_turn or busy or game.phase != TableGame.Phase.ACT:
+		return
+	var list := game.hints(view_seat)
+	if list.is_empty():
+		_show_message("NO MELDS - DISCARD A TILE", MULT_RED)
+		return
+	var h: Dictionary = list[hint_index % list.size()]
+	hint_index += 1
+	for v in views:
+		if v.selected:
+			v.set_selected(false)
+	var pool: Array[TileView] = views.duplicate()
+	for t: int in h.tiles:
+		for v in pool:
+			if v.tile == t:
+				v.set_selected(true)
+				pool.erase(v)
+				break
+	sfx.play("hint")
+	_show_message("%s  +%d  (%d/%d)" % [h.name, h.total, (hint_index - 1) % list.size() + 1, list.size()], Style.MINT)
+	_update_preview()
+
+
+func _on_power() -> void:
+	if not human_turn or busy or game.phase != TableGame.Phase.ACT:
+		return
+	var me := game.seats[view_seat]
+	if me.powerups.is_empty():
+		return
+	_open_overlay("POWER-UPS")
+	var y := 76.0
+	for id: String in TableGame.POWER_IDS:
+		var n := me.powerups.count(id)
+		if n == 0:
+			continue
+		var info: Dictionary = TableGame.POWERUPS[id]
+		_button("%s x%d" % [info.name, n], Rect2(70, y, 100, 18), _use_power.bind(id), overlay)
+		_label(info.desc, 8, Style.TEXT, Vector2(178, y + 5), 300, HORIZONTAL_ALIGNMENT_LEFT, overlay)
+		y += 22.0
+	_button("CANCEL", Rect2(190, y + 8, 100, 18), _close_overlay, overlay)
+
+
+func _use_power(id: String) -> void:
+	_close_overlay()
+	var sel := _selected_tiles()
+	match id:
+		"swap":
+			if sel.size() != 1:
+				_shake(2.0)
+				_show_message("SELECT 1 TILE TO TRADE", MULT_RED)
+				return
+			_open_overlay("SWAP WITH WHO?")
+			var y := 90.0
+			for i in game.seats.size():
+				if i == view_seat or game.seats[i].hand.is_empty():
+					continue
+				_button(game.seats[i].name, Rect2(190, y, 100, 18), _send_power.bind(id, sel, i), overlay)
+				y += 24.0
+			_button("CANCEL", Rect2(190, y + 8, 100, 18), _close_overlay, overlay)
+		"dump3":
+			var need := mini(3, game.seats[view_seat].hand.size())
+			if sel.size() != need:
+				_shake(2.0)
+				_show_message("SELECT %d TILES TO DUMP" % need, MULT_RED)
+				return
+			_send_power(id, sel, -1)
+		_:
+			_send_power(id, [], -1)
+
+
+func _send_power(id: String, tiles: Array, target: int) -> void:
+	_close_overlay()
+	_human_action({"type": "power", "id": id, "tiles": tiles, "target": target})
 
 
 func _clear_score_display() -> void:
@@ -984,6 +1157,7 @@ func _on_tile_clicked(v: TileView) -> void:
 		_shake(1.5)
 		return
 	v.set_selected(not v.selected)
+	sfx.play("select" if v.selected else "deselect")
 	_update_preview()
 
 
@@ -1010,6 +1184,7 @@ func _human_action(action: Dictionary) -> void:
 	if not human_turn or busy:
 		return
 	busy = true
+	hint_index = 0
 	_update_buttons()
 	if mode == "client":
 		_rpc_action.rpc_id(1, action)
@@ -1029,6 +1204,7 @@ func _do_action(si: int, action: Dictionary) -> bool:
 	if not res.ok:
 		last_err = str(res.err)
 		if si == view_seat and human_turn:
+			sfx.play("error")
 			_shake(2.5)
 			_show_message(last_err.to_upper(), MULT_RED)
 		return false
@@ -1041,15 +1217,35 @@ func _do_action(si: int, action: Dictionary) -> bool:
 func _play(si: int, res: Dictionary) -> void:
 	match res.type:
 		"draw":
+			sfx.play("draw")
 			if si == view_seat:
 				_reconcile_hand()
 			elif res.from == "discard":
 				_pop(discard_view)
 			else:
 				_pop(wall_view)
+			for id: String in res.get("found", []):
+				sfx.play("found")
+				_float_text("POWER-UP: %s" % TableGame.POWERUPS[id].name, Vector2(240, 150), Style.MINT)
+		"power":
+			sfx.play("power")
+			var info: Dictionary = TableGame.POWERUPS[res.id]
+			_show_message("%s USES %s" % [game.seats[si].name, info.name], Style.MINT, 1.0)
+			_flash(0.25)
+			if si == view_seat or int(res.get("target", -1)) == view_seat:
+				_reconcile_hand()
+			if res.id == "dump3":
+				_pop(discard_view)
+			for id: String in res.get("found", []):
+				_float_text("POWER-UP: %s" % TableGame.POWERUPS[id].name, Vector2(240, 150), Style.MINT)
 		"meld":
 			await _animate_meld(si, res)
+			if si == view_seat and not res.get("refill", []).is_empty():
+				_reconcile_hand()
+			for id: String in res.get("found", []):
+				_float_text("POWER-UP: %s" % TableGame.POWERUPS[id].name, Vector2(240, 150), Style.MINT)
 		"discard":
+			sfx.play("discard")
 			_pop(discard_view)
 			if si == view_seat:
 				_reconcile_hand()
@@ -1080,6 +1276,8 @@ func _animate_meld(si: int, res: Dictionary) -> void:
 		tw.tween_property(v, "scale", Vector2.ONE, 0.15)
 
 	var chips: int = res.base_chips
+	for b: String in res.bonuses:
+		_float_text(b, Vector2(240, 108), Style.AMBER)
 	var mult: int = res.base_mult
 	chips_label.text = str(chips)
 	mult_label.text = str(mult)
@@ -1087,12 +1285,14 @@ func _animate_meld(si: int, res: Dictionary) -> void:
 	meld_label.text = "%s: %s" % [seat.name, res.name]
 	meld_label.modulate = col.lightened(0.3)
 	_pop(meld_label)
+	sfx.play("meld")
 	await get_tree().create_timer(0.35).timeout
 
 	for i in n:
 		var v := center_views[i]
 		var step: int = res.steps[i]
 		chips += step
+		sfx.play("tick", 1.0 + i * 0.12)
 		chips_label.text = str(chips)
 		_pop(chips_label)
 		_pop(v)
@@ -1106,9 +1306,26 @@ func _animate_meld(si: int, res: Dictionary) -> void:
 
 	if res.combo > 0:
 		mult += res.combo
+		sfx.play("surge")
 		mult_label.text = str(mult)
 		_pop(mult_label)
 		_float_text("COMBO +%d SURGE" % res.combo, Vector2(240, 130), MULT_RED.lightened(0.3))
+		await get_tree().create_timer(0.3).timeout
+
+	if res.chain > 0:
+		mult += res.chain
+		sfx.play("surge", 1.25)
+		mult_label.text = str(mult)
+		_pop(mult_label)
+		_float_text("CHAIN +%d SURGE" % res.chain, Vector2(240, 118), Style.AMBER)
+		await get_tree().create_timer(0.3).timeout
+
+	if res.surge > 0:
+		mult += res.surge
+		sfx.play("surge", 1.5)
+		mult_label.text = str(mult)
+		_pop(mult_label)
+		_float_text("SURGE POWER-UP +%d" % res.surge, Vector2(240, 118), Style.MINT)
 		await get_tree().create_timer(0.3).timeout
 
 	var total: int = chips * mult
@@ -1119,6 +1336,7 @@ func _animate_meld(si: int, res: Dictionary) -> void:
 	_flash(0.2 + power * 0.03)
 	_burst(Vector2(240, 100), col, 30)
 	if res.stolen > 0:
+		sfx.play("steal")
 		_float_text("STOLE %d FROM %s" % [res.stolen, game.seats[res.victim].name], Vector2(240, 180), Color("d9a0ff"))
 	await _sync_scores()
 	await get_tree().create_timer(0.3).timeout
@@ -1129,12 +1347,14 @@ func _animate_meld(si: int, res: Dictionary) -> void:
 
 
 func _go_out_fx(si: int) -> void:
+	sfx.play("out")
 	_shake(7.0)
 	_flash(0.5)
 	_burst(Vector2(240, 130), GOLD, 60)
 	_burst(Vector2(100, 130), MULT_RED, 30)
 	_burst(Vector2(380, 130), CHIP_BLUE, 30)
-	_show_message("%s GOES OUT!  +%d" % [game.seats[si].name, TableGame.OUT_BONUS], GOLD, 1.4)
+	var pts := int(game.end_info.get("bonus", TableGame.OUT_BONUS))
+	_show_message("%s GOES OUT!%s" % [game.seats[si].name, "  +%d" % pts if pts > 0 else ""], GOLD, 1.4)
 	await _sync_scores()
 	await get_tree().create_timer(1.0).timeout
 

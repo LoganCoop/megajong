@@ -20,6 +20,10 @@ var face_down := false:
 		face_down = v
 		queue_redraw()
 var selected := false
+var hint := false:
+	set(v):
+		hint = v
+		queue_redraw()
 var lift := 0.0:
 	set(v):
 		lift = v
@@ -79,6 +83,8 @@ func _draw() -> void:
 	draw_rect(Rect2(o + Vector2(1, 1), Vector2(W - 2, H - 5)), face.lerp(Color.WHITE, flash))
 	# Neon inner frame in the tile's accent color.
 	draw_rect(Rect2(o + Vector2(2, 2), Vector2(W - 4, H - 7)), accent.darkened(0.45), false, 1.0)
+	if hint and not selected:
+		draw_rect(Rect2(o - Vector2(1, 1), Vector2(W + 2, H + 2)), Style.MINT, false, 2.0)
 	if selected:
 		draw_rect(Rect2(o - Vector2(1, 1), Vector2(W + 2, H + 2)), Style.AMBER, false, 1.0)
 
@@ -91,26 +97,38 @@ func _draw() -> void:
 		_draw_badge(o, "盗", Color("8a1fb8"))
 
 	var col: Color = accent if power == Meld.GOLD else SUIT_COLORS[suit]
-	var area := Rect2(o + Vector2(5, 5), Vector2(W - 10, H - 15))
+	var area := Rect2(o + Vector2(5, 5), Vector2(W - 10, H - 21))
 	match suit:
 		0:
 			_draw_grid(area, rank, func(p: Vector2, big: bool) -> void:
-				var r := 6.0 if big else 3.0
+				var r := 6.0 if big else (2.5 if rank >= 7 else 3.0)
 				draw_circle(p, r, col.darkened(0.35))
 				draw_circle(p, r - 1.0, col)
 				draw_circle(p, maxf(r - 2.5, 1.0), face)
 			)
+			_draw_rank(o, rank, col)
 		1:
 			_draw_grid(area, rank, func(p: Vector2, big: bool) -> void:
-				var h := 14.0 if big else 8.0
-				draw_rect(Rect2(p - Vector2(1.5, h / 2.0), Vector2(3, h)), col)
-				draw_rect(Rect2(p - Vector2(1.5, h / 2.0), Vector2(1, h)), col.lightened(0.5))
-				draw_rect(Rect2(p + Vector2(-2, -1), Vector2(4, 1)), face)
+				var h := 14.0 if big else (6.0 if rank >= 7 else 8.0)
+				var w := 5.0 if big else 4.0
+				var r := Rect2(p - Vector2(w / 2.0, h / 2.0), Vector2(w, h))
+				draw_rect(r.grow(1.0), col.darkened(0.7))
+				draw_rect(r, col)
+				draw_rect(Rect2(r.position, Vector2(1, h)), col.lightened(0.5))
+				if h > 6.0:
+					draw_rect(Rect2(p + Vector2(-w / 2.0, -0.5), Vector2(w, 1)), face)
 			)
+			_draw_rank(o, rank, col)
 		2:
 			var f := Style.pixel()
 			draw_string(f, o + Vector2(0, 25), str(rank), HORIZONTAL_ALIGNMENT_CENTER, W, 16, col)
 			draw_string(f, o + Vector2(0, 38), "CH", HORIZONTAL_ALIGNMENT_CENTER, W, 8, col.darkened(0.25))
+
+
+func _draw_rank(o: Vector2, rank: int, col: Color) -> void:
+	var f := Style.pixel()
+	draw_string(f, o + Vector2(1, 41), str(rank), HORIZONTAL_ALIGNMENT_CENTER, W, 8, Color.BLACK)
+	draw_string(f, o + Vector2(0, 40), str(rank), HORIZONTAL_ALIGNMENT_CENTER, W, 8, col.lightened(0.6))
 
 
 func _draw_back(o: Vector2) -> void:

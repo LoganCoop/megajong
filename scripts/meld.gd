@@ -14,6 +14,14 @@ const SET_MULT := {3: 3, 4: 5}
 const RUN_CHIPS := {3: 20, 4: 40, 5: 70}
 const RUN_MULT := {3: 2, 4: 3, 5: 5}
 const PURE_SET_BONUS := 2
+const TRI_SUIT_BONUS := 3
+const CORNER_CHIPS := 25
+const CORNER_MULT := 3
+const LADDER_CHIPS := {3: 25, 4: 50}
+const LADDER_MULT := {3: 3, 4: 4}
+const SUM_TARGETS := {15: [20, 2], 21: [30, 3]}
+
+static var sum15_enabled := true
 const BASE_TILES := [
 	1, 2, 3, 4, 5, 6, 7, 8, 9,
 	11, 12, 13, 14, 15, 16, 17, 18, 19,
@@ -93,14 +101,19 @@ static func _eval_plain(tiles: Array) -> Dictionary:
 		if same_suit:
 			mult += PURE_SET_BONUS
 			label = "PURE " + label
+		elif n == 3 and _distinct(suits) == 3:
+			mult += TRI_SUIT_BONUS
+			label = "TRI-SUIT SET"
 		return {"name": label, "kind": "set", "chips": SET_CHIPS[n], "mult": mult, "tiles": tiles}
 
 	if same_suit:
 		var consecutive := true
+		var stepped := n <= 4
 		for i in range(1, n):
 			if ranks[i] != ranks[i - 1] + 1:
 				consecutive = false
-				break
+			if ranks[i] != ranks[i - 1] + 2:
+				stepped = false
 		if consecutive:
 			return {
 				"name": "RUN OF %d" % n,
@@ -109,4 +122,22 @@ static func _eval_plain(tiles: Array) -> Dictionary:
 				"mult": RUN_MULT[n],
 				"tiles": tiles,
 			}
+		if stepped:
+			return {"name": "LADDER OF %d" % n, "kind": "ladder",
+				"chips": LADDER_CHIPS[n], "mult": LADDER_MULT[n], "tiles": tiles}
+
+	if n == 3:
+		if ranks.all(func(r: int) -> bool: return r == 1 or r == 9) and ranks[0] == 1 and ranks[2] == 9:
+			return {"name": "CORNERS", "kind": "corner", "chips": CORNER_CHIPS, "mult": CORNER_MULT, "tiles": tiles}
+		var sum: int = ranks[0] + ranks[1] + ranks[2]
+		if SUM_TARGETS.has(sum) and (sum15_enabled or sum != 15):
+			return {"name": "SUM %d" % sum, "kind": "sum",
+				"chips": SUM_TARGETS[sum][0], "mult": SUM_TARGETS[sum][1], "tiles": tiles}
 	return {}
+
+
+static func _distinct(values: Array) -> int:
+	var seen := {}
+	for v in values:
+		seen[v] = true
+	return seen.size()
